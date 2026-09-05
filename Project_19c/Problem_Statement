@@ -1,0 +1,181 @@
+================================================================================
+PROJECT 19C: Enterprise Financial Wire Transfers, Inventory Balances & Coverage Matrix
+================================================================================
+Target Schedule: Week 3 — Day 11 (Topics M1–M5)
+Target Topics: Transaction Facts, Periodic Snapshots, Accumulating Snapshots,Factless Facts, Junk Dimensions, Degenerate Dimensions
+
+Environment: SQL / Snowflake SQL
+
+--------------------------------------------------------------------------------
+1. PROBLEM STATEMENT & BUSINESS SCENARIO
+--------------------------------------------------------------------------------
+You are a Principal Data Architect at a global banking and supply-chain enterprise. 
+The system tracks high-value wire transfers, multi-vault cash reserves, international credit 
+compliance audits, and approval lifecycle milestones across global regions.
+
+You are tasked with engineering a fully integrated multi-fact schema:
+1. Junk Dimension (`DIM_WIRE_ATTRIBUTES`) consolidating transaction risk flags, auth methods, and transfer types.
+2. Transaction Fact Table (`FACT_WIRE_TRANSFERS`) with degenerate transaction IDs and strict additive/non-additive measure validation.
+3. Periodic Snapshot Fact Table (`FACT_VAULT_CASH_SNAPSHOT`) tracking daily bank balances across regional vaults.
+4. Accumulating Snapshot Fact Table (`FACT_CREDIT_APPROVAL_LIFECYCLE`) tracking time elapsed across loan application stages.
+5. Factless Fact Table (`FACTLESS_COMPLIANCE_AUDIT_COVERAGE`) mapping accounts subjected to audit reviews.
+
+--------------------------------------------------------------------------------
+2. INPUT DATASETS (CSV TABULAR FORMAT)
+--------------------------------------------------------------------------------
+
+Raw Wire Transfer Events (`raw_wire_transfers.csv`):
+----------------------------------------------------
+txn_id,txn_date,sender_acc,receiver_acc,amount,fee,currency_rate,auth_method,risk_flag,transfer_type
+TXN-9001,2026-08-20,ACC-101,ACC-801,100000.00,50.00,1.00,2FA,LOW,DOMESTIC
+TXN-9002,2026-08-20,ACC-102,ACC-901,450000.00,250.00,0.85,BIOMETRIC,HIGH,INTERNATIONAL
+TXN-9003,2026-08-21,ACC-103,ACC-802,75000.00,30.00,1.00,2FA,LOW,DOMESTIC
+TXN-9004,2026-08-21,ACC-101,ACC-902,1200000.00,500.00,0.92,HARD_TOKEN,HIGH,INTERNATIONAL
+TXN-9005,2026-08-22,ACC-104,ACC-803,25000.00,15.00,1.00,2FA,LOW,DOMESTIC
+TXN-9006,2026-08-22,ACC-105,ACC-904,600000.00,300.00,0.85,BIOMETRIC,MEDIUM,INTERNATIONAL
+TXN-9007,2026-08-23,ACC-102,ACC-801,89000.00,40.00,1.00,2FA,LOW,DOMESTIC
+
+Vault Cash Balance Logs (`raw_vault_cash.csv`):
+-----------------------------------------------
+snapshot_date,vault_id,currency_code,opening_balance,closing_balance,reserve_ratio_pct
+2026-08-24,VLT-NY,USD,5000000.00,5200000.00,0.15
+2026-08-24,VLT-LDN,GBP,3000000.00,2800000.00,0.18
+2026-08-24,VLT-SGP,SGD,8000000.00,8100000.00,0.12
+2026-08-25,VLT-NY,USD,5200000.00,4900000.00,0.15
+2026-08-25,VLT-LDN,GBP,2800000.00,3100000.00,0.18
+2026-08-25,VLT-SGP,SGD,8100000.00,8400000.00,0.12
+
+Credit Application Lifecycles (`raw_credit_lifecycles.csv`):
+-----------------------------------------------------------
+app_id,submission_date,underwrite_date,risk_approval_date,disbursement_date
+APP-401,2026-08-01,2026-08-03,2026-08-05,2026-08-07
+APP-402,2026-08-05,2026-08-08,2026-08-12,2026-08-15
+APP-403,2026-08-10,2026-08-12,2026-08-18,NULL
+APP-404,2026-08-15,2026-08-19,NULL,NULL
+APP-405,2026-08-20,NULL,NULL,NULL
+
+Compliance Audit Schedule Roster (`raw_audit_coverage.csv`):
+-------------------------------------------------------------
+audit_year,quarter,account_id,auditor_firm,compliance_status
+2026,Q1,ACC-101,Deloitte,VERIFIED
+2026,Q1,ACC-102,PwC,FLAGGED
+2026,Q1,ACC-103,EY,VERIFIED
+2026,Q2,ACC-101,Deloitte,VERIFIED
+2026,Q2,ACC-104,KPMG,VERIFIED
+2026,Q2,ACC-105,PwC,FLAGGED
+
+--------------------------------------------------------------------------------
+3. STUDENT TASKS & EXPECTED OUTPUTS
+--------------------------------------------------------------------------------
+
+TASK 1: Advanced Junk Dimension Construction
+- Create `DIM_WIRE_ATTRIBUTES` combining `AUTH_METHOD`, `RISK_FLAG`, and `TRANSFER_TYPE`.
+
+EXPECTED OUTPUT (SELECT * FROM DIM_WIRE_ATTRIBUTES ORDER BY ATTRIBUTE_SK):
++--------------+-------------+-----------+---------------+
+| ATTRIBUTE_SK | AUTH_METHOD | RISK_FLAG | TRANSFER_TYPE |
++--------------+-------------+-----------+---------------+
+| 1            | 2FA         | LOW       | DOMESTIC      |
+| 2            | BIOMETRIC   | HIGH      | INTERNATIONAL |
+| 3            | HARD_TOKEN  | HIGH      | INTERNATIONAL |
+| 4            | BIOMETRIC   | MEDIUM    | INTERNATIONAL |
++--------------+-------------+-----------+---------------+
+
+
+TASK 2: Wire Transfer Fact Table & Currency Normalized Measures
+- Create `FACT_WIRE_TRANSFERS` retaining `TXN_ID` as a Degenerate Dimension.
+- Calculate `BASE_AMOUNT_USD` = `amount * currency_rate`.
+- Calculate `NET_TRANSFER_VAL` = `BASE_AMOUNT_USD - fee`.
+
+EXPECTED OUTPUT:
++----------+------------+--------------+---------------+---------------+------------------+
+| TXN_ID   | SENDER_ACC | ATTRIBUTE_SK | AMOUNT        | BASE_VAL_USD  | NET_TRANSFER_VAL |
++----------+------------+--------------+---------------+---------------+------------------+
+| TXN-9001 | ACC-101    | 1            | 100000.00     | 100000.00     | 99950.00         |
+| TXN-9002 | ACC-102    | 2            | 450000.00     | 382500.00     | 382250.00        |
+| TXN-9003 | ACC-103    | 1            | 75000.00      | 75000.00      | 74970.00         |
+| TXN-9004 | ACC-101    | 3            | 1200000.00    | 1104000.00    | 1103500.00       |
+| TXN-9005 | ACC-104    | 1            | 25000.00      | 25000.00      | 24985.00         |
+| TXN-9006 | ACC-105    | 4            | 600000.00     | 510000.00     | 509700.00        |
+| TXN-9007 | ACC-102    | 1            | 89000.00      | 89000.00      | 88960.00         |
++----------+------------+--------------+---------------+---------------+------------------+
+
+
+TASK 3: Periodic Vault Snapshot & Non-Additive Reserve Validation
+- Create `FACT_VAULT_CASH_SNAPSHOT`.
+- Calculate `NET_DAILY_CHANGE` = `closing_balance - opening_balance`.
+- Note: `reserve_ratio_pct` is Non-Additive; `closing_balance` is Semi-Additive across time.
+
+EXPECTED OUTPUT (Grouped by `snapshot_date`):
++---------------+-----------------------+-----------------------+
+| SNAPSHOT_DATE | TOTAL_OPENING_USD_EQU | TOTAL_CLOSING_USD_EQU |
++---------------+-----------------------+-----------------------+
+| 2026-08-24    | 16000000.00           | 16100000.00           |
+| 2026-08-25    | 16100000.00           | 16400000.00           |
++---------------+-----------------------+-----------------------+
+
+
+TASK 4: Loan Application Accumulating Milestone Duration Table
+- Create `FACT_CREDIT_APPROVAL_LIFECYCLE` calculating:
+  * `UNDERWRITE_DAYS` (`underwrite_date - submission_date`)
+  * `RISK_APPROVAL_DAYS` (`risk_approval_date - underwrite_date`)
+  * `DISBURSEMENT_DAYS` (`disbursement_date - risk_approval_date`)
+  * `TOTAL_CYCLE_DAYS` (`disbursement_date - submission_date`)
+
+EXPECTED OUTPUT:
++--------+-----------------+--------------------+-------------------+------------------+
+| APP_ID | UNDERWRITE_DAYS | RISK_APPROVAL_DAYS | DISBURSEMENT_DAYS | TOTAL_CYCLE_DAYS |
++--------+-----------------+--------------------+-------------------+------------------+
+| APP-401| 2               | 2                  | 2                 | 6                |
+| APP-402| 3               | 4                  | 3                 | 10               |
++--------+-----------------+--------------------+-------------------+------------------+
+
+
+TASK 5: Bottleneck Stage Identification in Credit Pipeline
+- Query `FACT_CREDIT_APPROVAL_LIFECYCLE` to isolate applications stuck in approval stages (`DISBURSEMENT_DATE IS NULL`).
+
+EXPECTED OUTPUT:
++--------+-------------------+--------------------+
+| APP_ID | SUBMISSION_DATE   | CURRENT_BOTTLENECK |
++--------+-------------------+--------------------+
+| APP-403| 2026-08-10        | AWAITING_DISBURSAL |
+| APP-404| 2026-08-15        | AWAITING_RISK_AUTH |
+| APP-405| 2026-08-20        | AWAITING_UNDERWRITE|
++--------+-------------------+--------------------+
+
+
+TASK 6: Factless Audit Coverage Matrix Analysis
+- Create `FACTLESS_COMPLIANCE_AUDIT_COVERAGE`.
+- Query accounts that processed HIGH RISK wire transfers (`FACT_WIRE_TRANSFERS`) but were NEVER audited in 2026 (`FACTLESS_COMPLIANCE_AUDIT_COVERAGE`).
+
+EXPECTED OUTPUT:
++------------+--------------------+-------------------+
+| ACCOUNT_ID | HIGH_RISK_TXN_COUNT| COMPLIANCE_STATUS |
++------------+--------------------+-------------------+
+| ACC-101    | 1                  | AUDITED           |
+| ACC-102    | 1                  | AUDITED           |
++------------+--------------------+-------------------+
+
+
+TASK 7: Risk Profile Revenue Cross-Analysis
+- Join `FACT_WIRE_TRANSFERS` with `DIM_WIRE_ATTRIBUTES` to aggregate total fees and transaction volume by `RISK_FLAG` and `TRANSFER_TYPE`.
+
+EXPECTED OUTPUT:
++-----------+---------------+------------+------------+------------------+
+| RISK_FLAG | TRANSFER_TYPE | TOTAL_TXNS | TOTAL_FEES | TOTAL_VOLUME_USD |
++-----------+---------------+------------+------------+------------------+
+| HIGH      | INTERNATIONAL | 2          | 750.00     | 1486500.00       |
+| LOW       | DOMESTIC      | 4          | 135.00     | 289000.00        |
+| MEDIUM    | INTERNATIONAL | 1          | 300.00     | 510000.00        |
++-----------+---------------+------------+------------+------------------+
+
+
+TASK 8: Multi-Fact Comprehensive Reconciliation Audit
+- Write a unified audit query verifying gross totals across Transaction Facts, Periodic Snapshots, and Accumulating Snapshots.
+
+EXPECTED OUTPUT:
++---------------------+-------------------+---------------------+--------------------+
+| TOTAL_WIRE_VOL_USD  | VAULT_CLOSING_USD | COMPLETED_LOAN_APPS | AUDIT_SANITY_FLAG  |
++---------------------+-------------------+---------------------+--------------------+
+| 2286500.00          | 16400000.00       | 2                   | TRUE               |
++---------------------+-------------------+---------------------+--------------------+
